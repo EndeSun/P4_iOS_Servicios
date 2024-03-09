@@ -22,8 +22,29 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             print("Problemas en la sincronización")
         }
         
+        //Para ver cuando un valor cambia en otro dispositivo iCloud
+        NotificationCenter.default.addObserver(
+                    self,
+                    selector: #selector(muestraValoriCloud(notification:)),
+                    name: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
+                    object: nil)
+        
         return true
     }
+    
+    @objc func muestraValoriCloud(notification: Notification){
+            let valoriCloud = Int(store.longLong(forKey: "itemNum"))
+            print("Recibida notificación del sistema con el valor: \(valoriCloud)")
+            // Actualizamos el valor en el controller
+            DispatchQueue.main.async {
+                let application = UIApplication.shared
+                
+                if let controller = application.windows[0].rootViewController {
+                    let miController: ToDoTableViewController = controller as! ToDoTableViewController
+                    miController.getValueFromBackGround(itemNum: valoriCloud)
+                }
+            }
+        }
 
     func applicationWillResignActive(_ application: UIApplication) {
         // Sent when the application is about to move from active to inactive state. This can occur for certain types of temporary interruptions (such as an incoming phone call or SMS message) or when the user quits the application and it begins the transition to the background state.
