@@ -12,8 +12,10 @@ class ToDoItem: NSObject {
     var nombreItem: String
     var completado: Bool = false
     var fechaFinalizacion: Date? = nil
+    var isFromPublic: Bool
    
-    init(nombre: String) {
+    init(nombre: String, isFromPublicDB: Bool = false) {
         nombreItem = nombre
+        isFromPublic = isFromPublicDB
     }
 }

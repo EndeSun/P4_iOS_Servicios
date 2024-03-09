@@ -20,6 +20,8 @@ class ToDoTableViewController: UITableViewController {
     let container =  CKContainer.default()
     var privateDB: CKDatabase!
     var publicDB: CKDatabase!
+    var customRefreshControl = UIRefreshControl()
+    
     
     
     override func viewDidLoad() {
@@ -27,7 +29,13 @@ class ToDoTableViewController: UITableViewController {
         getValuefromiCloud()
         getCloudKit()
         getRecord()
-        //self.tareaRecord["owningList"] = CKRecord.Reference(record: self.tareaRecord, action: .deleteSelf)
+        getRecordPublic()
+        requestDiscoverPermission()
+        
+        // Refresh controller configuration
+        self.customRefreshControl.attributedTitle = NSAttributedString(string: "Actualizando")
+        self.customRefreshControl.addTarget(self, action: #selector(getRecord), for: .valueChanged)
+        tableView.addSubview(self.customRefreshControl)
     }
     
     
@@ -47,35 +55,64 @@ class ToDoTableViewController: UITableViewController {
         self.publicDB = self.container.publicCloudDatabase
     }
     
-    func saveRecord(nameTask: String){
+    func saveRecord(nameTask: String, publicCloud: Bool){
         let tareaRecord = CKRecord(recordType: "Tarea")
         tareaRecord["nombre"] = nameTask
         //save in the private record at the cloudKit
-        print("Guardando en el cloudKit privado")
+        if(publicCloud){
+            print("Guardando en el cloudKit público")
+            publicDB.save(tareaRecord, completionHandler: {
+                (record: CKRecord?, error: Error?) in
+                    print("Error al guardar: \(String(describing: error))") //When the error is nil = we do not have error 🥲
+            })
+        }else{
+            print("Guardando en el cloudKit privado")
+            privateDB.save(tareaRecord, completionHandler: {
+                (record: CKRecord?, error: Error?) in
+                    print("Error al guardar: \(String(describing: error))") //When the error is nil = we do not have error 🥲
+            })
+        }
         
-        privateDB.save(tareaRecord, completionHandler: {
-            (record: CKRecord?, error: Error?) in
-                print("Error al guardar: \(String(describing: error))") //When the error is nil = we do not have error 🥲
-        })
     }
     
-    func getRecord(){
+    func requestDiscoverPermission(){
+        //For user Discover for the others classmates
+        self.container.requestApplicationPermission(
+            CKContainer.ApplicationPermissions.userDiscoverability,
+            completionHandler: { (permissionStatus, error) in
+                print("Permiso concedido: " +
+                    "\(permissionStatus == CKContainer.ApplicationPermissionStatus.granted)")})
+        
+        self.container.discoverAllIdentities(completionHandler: { (optUsers, error) in
+            if let users = optUsers {
+                for user in users {
+                    print(user)
+                }
+            }})
+    }
+    
+    @objc func getRecord(){
         let query = CKQuery(recordType: "Tarea", predicate: NSPredicate(value:true))
         //New Version --> fetch
         if #available(iOS 15.0, *) {
             self.privateDB.fetch(withQuery: query, completionHandler: { (result) in
                 switch result {
                 case .success(let records):
+                    var newData: [ToDoItem] = []
                     for (_, recordResult) in records.matchResults {
                         if case .success(let record) = recordResult {
                             if let nombre = record["nombre"] {
-                                let toDoItem = ToDoItem(nombre: nombre as! String)
-                                self.toDoItems.append(toDoItem)
+                                if !self.toDoItems.contains(where: { $0.nombreItem == nombre as! String }) {
+                                    newData.append(ToDoItem(nombre: nombre as! String))
+                                }
                             }
                         }
                     }
+                    self.toDoItems.append(contentsOf: newData)
+                    
                     DispatchQueue.main.async( execute: {
                         self.tableView.reloadData()
+                        self.customRefreshControl.endRefreshing()
                     })
                     break
                 case .failure(let error):
@@ -88,14 +125,19 @@ class ToDoTableViewController: UITableViewController {
             self.privateDB.perform(query, inZoneWith: nil, completionHandler: {
                 (results, error) in
                 if error == nil {
+                    var newData: [ToDoItem] = []
+                     // Procesar los resultados y agregar solo los nuevos datos a newData
                     for result in results! {
-                        if let nombre = result["nombre"] {
-                            let toDoItem = ToDoItem(nombre: nombre as! String)
-                            self.toDoItems.append(toDoItem)
+                        guard let nombre = result["nombre"] as? String else { continue }
+                        if !self.toDoItems.contains(where: { $0.nombreItem == nombre }) {
+                            newData.append(ToDoItem(nombre: nombre))
                         }
                     }
+                    self.toDoItems.append(contentsOf: newData)
+                    
                     DispatchQueue.main.async( execute: {
                         self.tableView.reloadData()
+                        self.customRefreshControl.endRefreshing()
                     })
                 } else {
                     print("Query error: \(String(describing: error))")
@@ -104,11 +146,66 @@ class ToDoTableViewController: UITableViewController {
         }
     }
     
+    @objc func getRecordPublic(){
+        let query = CKQuery(recordType: "Tarea", predicate: NSPredicate(value:true))
+        //New Version --> fetch
+        if #available(iOS 15.0, *) {
+            self.publicDB.fetch(withQuery: query, completionHandler: { (result) in
+                switch result {
+                case .success(let records):
+                    var newData: [ToDoItem] = []
+                    for (_, recordResult) in records.matchResults {
+                        if case .success(let record) = recordResult {
+                            if let nombre = record["nombre"] {
+                                if !self.toDoItems.contains(where: { $0.nombreItem == nombre as! String }) {
+                                    newData.append(ToDoItem(nombre: nombre as! String, isFromPublicDB: true))
+                                }
+                            }
+                        }
+                    }
+                    self.toDoItems.append(contentsOf: newData)
+                    
+                    DispatchQueue.main.async( execute: {
+                        self.tableView.reloadData()
+                        self.customRefreshControl.endRefreshing()
+                    })
+                    break
+                case .failure(let error):
+                    print("Error al cargar: \(error)")
+                    break
+                }
+            })
+        } else {
+            //Old version --> perform
+            self.publicDB.perform(query, inZoneWith: nil, completionHandler: {
+                (results, error) in
+                if error == nil {
+                    var newData: [ToDoItem] = []
+                     // Procesar los resultados y agregar solo los nuevos datos a newData
+                    for result in results! {
+                        guard let nombre = result["nombre"] as? String else { continue }
+                        if !self.toDoItems.contains(where: { $0.nombreItem == nombre }) {
+                            newData.append(ToDoItem(nombre: nombre, isFromPublicDB: true))
+                        }
+                    }
+                    self.toDoItems.append(contentsOf: newData)
+                    
+                    DispatchQueue.main.async( execute: {
+                        self.tableView.reloadData()
+                        self.customRefreshControl.endRefreshing()
+                    })
+                } else {
+                    print("Query error: \(String(describing: error))")
+                }
+            })
+        }
+    }
     
-    
+    //Delete task in the cloudKit
     func deleteTarea(_ toDoItem: ToDoItem) {
         let query = CKQuery(recordType: "Tarea",
                             predicate: NSPredicate(format: "nombre == %@", argumentArray: [toDoItem.nombreItem]))
+        
         privateDB.perform(query, inZoneWith: nil, completionHandler: {
             (results, error) in
             if error == nil {
@@ -120,6 +217,7 @@ class ToDoTableViewController: UITableViewController {
                 }
             }
         })
+        
     }
     
     //-------------------------------------------
@@ -139,7 +237,10 @@ class ToDoTableViewController: UITableViewController {
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "ListPrototypeCell", for: indexPath)
         let toDoItem = toDoItems[indexPath.row]
+        
         cell.textLabel!.text = toDoItem.nombreItem
+        cell.textLabel!.textColor = toDoItem.isFromPublic ? UIColor.systemRed : UIColor.black
+        
         if (toDoItem.completado) {
             cell.accessoryType = UITableViewCell.AccessoryType.checkmark
         } else {
@@ -168,13 +269,17 @@ class ToDoTableViewController: UITableViewController {
     //Receiver function from AddToDoItemViewController
     @IBAction func unWindToList(_ segue: UIStoryboardSegue) {
         let fuente: AddToDoItemViewController = segue.source as! AddToDoItemViewController
+        
         if let item = fuente.toDoItem {
             toDoItems.append(item)
             //save task to the private record --> TO_DO private or public cloudkit is required
-            saveRecord(nameTask: item.nombreItem)
+            saveRecord(nameTask: item.nombreItem, publicCloud: item.isFromPublic)
             self.tableView.reloadData()
         }
     }
+    
+    
+    
     //Selected row
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: false)
@@ -193,6 +298,7 @@ class ToDoTableViewController: UITableViewController {
         itemsTerminados = valoriCloud
     }
     
+    //When other device change value, we receive the message from the app Delegate
     func getValueFromBackGround(itemNum: Int){
         itemsTerminados = itemNum
     }
